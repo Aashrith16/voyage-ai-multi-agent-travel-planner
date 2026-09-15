@@ -1,0 +1,29 @@
+[project]
+name = "voyage-ai-backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "google-genai>=2.23.0",
+    "httpx>=0.28.1",
+    "jsonpatch>=1.33",
+    "langgraph>=1.2.11",
+    "openai-agents>=0.22.2",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "python-dotenv>=1.2.3",
+    "tavily-python>=0.8.3",
+    "uvicorn>=0.53.0",
+]
+
+[project.scripts]
+voyage-ai = "voyage_ai:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "voyage_ai"
