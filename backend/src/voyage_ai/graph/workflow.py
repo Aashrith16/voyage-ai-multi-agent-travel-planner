@@ -6,6 +6,10 @@ from langgraph.types import interrupt
 
 from voyage_ai.agents.destination_agent import research_destination
 
+from voyage_ai.services.weather_service import (
+    get_weather_context,
+)
+
 from voyage_ai.agents.request_agent import (
     get_clarification_questions,
     understand_trip_request,
@@ -140,7 +144,7 @@ def finalize_request_node(
 
     return {
         "final_trip": final_trip,
-        "status": "complete",
+        "status": "gathering_context",
     }
 
 # --------------------------------------------------
@@ -160,6 +164,47 @@ def research_destination_node(
 
     return {
         "destination_research": research,
+    }
+
+# ==================================================
+# WEATHER INTELLIGENCE NODE
+# ==================================================
+
+def weather_intelligence_node(
+    state: TravelRequestState,
+) -> dict:
+
+    final_trip = state["final_trip"]
+
+    weather_context = get_weather_context(
+        destination=final_trip.destination,
+        start_date=final_trip.departure_date,
+        end_date=final_trip.return_date,
+    )
+
+    return {
+        "weather_context": weather_context,
+    }
+
+# ==================================================
+# CONTEXT JOIN NODE
+# ==================================================
+
+def context_ready_node(
+    state: TravelRequestState,
+) -> dict:
+
+    if "destination_research" not in state:
+        raise ValueError(
+            "Destination research is missing."
+        )
+
+    if "weather_context" not in state:
+        raise ValueError(
+            "Weather context is missing."
+        )
+
+    return {
         "status": "complete",
     }
 
@@ -198,6 +243,15 @@ builder.add_node(
     research_destination_node,
 )
 
+builder.add_node(
+    "weather_intelligence",
+    weather_intelligence_node,
+)
+
+builder.add_node(
+    "context_ready",
+    context_ready_node,
+)
 
 # --------------------------------------------------
 # EDGES
@@ -247,14 +301,43 @@ builder.add_conditional_edges(
 )
 
 
-# Finalize → END
+# --------------------------------------------------
+# PARALLEL CONTEXT GATHERING
+# --------------------------------------------------
+
+# After finalizing the trip,
+# start Destination Research.
+
 builder.add_edge(
     "finalize",
     "research_destination",
 )
 
+
+# At the SAME stage,
+# also start Weather Intelligence.
+
 builder.add_edge(
-    "research_destination",
+    "finalize",
+    "weather_intelligence",
+)
+
+
+# Wait until BOTH branches finish.
+
+builder.add_edge(
+    [
+        "research_destination",
+        "weather_intelligence",
+    ],
+    "context_ready",
+)
+
+
+# Only then finish the graph.
+
+builder.add_edge(
+    "context_ready",
     END,
 )
 

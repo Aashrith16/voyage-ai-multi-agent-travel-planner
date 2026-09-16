@@ -5,7 +5,7 @@ from voyage_ai.models.trip import (
     TripRequest,
     TripRequestDraft,
 )
-
+from voyage_ai.models.weather import WeatherContext
 
 class TravelRequestState(TypedDict, total=False):
     """
@@ -28,10 +28,13 @@ class TravelRequestState(TypedDict, total=False):
     final_trip: TripRequest
 
     destination_research: DestinationResearch
+    
+    weather_context: WeatherContext
 
     # Current workflow status
     status: Literal[
         "processing",
         "needs_clarification",
+        "gathering_context",
         "complete",
     ]
