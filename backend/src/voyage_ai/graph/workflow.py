@@ -10,6 +10,18 @@ from voyage_ai.services.weather_service import (
     get_weather_context,
 )
 
+from voyage_ai.services.activity_service import (
+    build_activity_intelligence,
+)
+
+from voyage_ai.services.routing_service import (
+    build_travel_matrix,
+)
+
+from voyage_ai.services.itinerary_optimizer import (
+    optimize_itinerary,
+)
+
 from voyage_ai.agents.request_agent import (
     get_clarification_questions,
     understand_trip_request,
@@ -205,6 +217,213 @@ def context_ready_node(
         )
 
     return {
+        "status": "optimizing",
+    }
+
+# ==================================================
+# ACTIVITY INTELLIGENCE NODE
+# ==================================================
+
+def activity_intelligence_node(
+    state: TravelRequestState,
+) -> dict:
+
+    trip = state["final_trip"]
+
+    research = state[
+        "destination_research"
+    ]
+
+    activity_intelligence = (
+        build_activity_intelligence(
+            trip=trip,
+            research=research,
+        )
+    )
+
+    activity_intelligence = (
+        add_planning_durations(
+            activity_intelligence
+        )
+    )
+
+    return {
+        "activity_intelligence":
+            activity_intelligence,
+    }
+
+# ==================================================
+# PLANNING DURATION ASSUMPTIONS
+#
+# These are scheduling assumptions only.
+# They are NOT official attraction visit durations.
+# ==================================================
+
+def add_planning_durations(
+    intelligence,
+):
+
+    enriched = []
+
+    for activity in intelligence.activities:
+
+        if (
+            activity.estimated_duration_minutes
+            is not None
+        ):
+            enriched.append(activity)
+            continue
+
+        category = activity.category.lower()
+
+        if any(
+            word in category
+            for word in [
+                "park",
+                "garden",
+                "walking",
+            ]
+        ):
+            duration = 120
+
+        elif any(
+            word in category
+            for word in [
+                "museum",
+                "aquarium",
+                "gallery",
+            ]
+        ):
+            duration = 150
+
+        elif any(
+            word in category
+            for word in [
+                "food",
+                "restaurant",
+                "cafe",
+                "market",
+            ]
+        ):
+            duration = 90
+
+        elif any(
+            word in category
+            for word in [
+                "shopping",
+                "anime",
+                "technology",
+                "arcade",
+            ]
+        ):
+            duration = 180
+
+        else:
+            duration = 120
+
+        enriched.append(
+            activity.model_copy(
+                update={
+                    "estimated_duration_minutes":
+                        duration
+                }
+            )
+        )
+
+    return intelligence.model_copy(
+        update={
+            "activities": enriched
+        }
+    )
+
+# ==================================================
+# ROUTING NODE
+# ==================================================
+
+def routing_node(
+    state: TravelRequestState,
+) -> dict:
+
+    intelligence = state[
+        "activity_intelligence"
+    ]
+
+    enriched, matrix = (
+        build_travel_matrix(
+            intelligence
+        )
+    )
+
+    return {
+        "activity_intelligence": enriched,
+        "travel_matrix": matrix,
+    }
+
+# ==================================================
+# ITINERARY OPTIMIZATION NODE
+# ==================================================
+
+def optimize_itinerary_node(
+    state: TravelRequestState,
+) -> dict:
+
+    trip = state["final_trip"]
+
+    intelligence = state[
+        "activity_intelligence"
+    ]
+
+    matrix = state[
+        "travel_matrix"
+    ]
+
+    weather = state[
+        "weather_context"
+    ]
+
+    # Number of calendar days in the trip
+    number_of_days = (
+        trip.return_date
+        - trip.departure_date
+    ).days + 1
+
+    # Convert weather information into
+    # one suitability value per day
+    weather_by_day = [
+        risk.outdoor_suitability
+        for risk in weather.risks
+    ]
+
+    # If weather data contains fewer days
+    # than the trip, fill the remaining days.
+    while len(weather_by_day) < number_of_days:
+        weather_by_day.append(
+            "unknown"
+        )
+
+    weather_by_day = weather_by_day[
+        :number_of_days
+    ]
+
+    itinerary = optimize_itinerary(
+        activity_intelligence=intelligence,
+        travel_matrix=matrix,
+        number_of_days=number_of_days,
+
+        # 10 planning hours per day
+        daily_minutes=600,
+
+        # We have not separated the total trip
+        # budget into an activity-only budget yet.
+        activity_budget=None,
+
+        weather_suitability_by_day=(
+            weather_by_day
+        ),
+    )
+
+    return {
+        "optimized_itinerary": itinerary,
         "status": "complete",
     }
 
@@ -251,6 +470,21 @@ builder.add_node(
 builder.add_node(
     "context_ready",
     context_ready_node,
+)
+
+builder.add_node(
+    "activity_intelligence",
+    activity_intelligence_node,
+)
+
+builder.add_node(
+    "routing",
+    routing_node,
+)
+
+builder.add_node(
+    "optimize_itinerary",
+    optimize_itinerary_node,
 )
 
 # --------------------------------------------------
@@ -338,6 +572,21 @@ builder.add_edge(
 
 builder.add_edge(
     "context_ready",
+    "activity_intelligence",
+)
+
+builder.add_edge(
+    "activity_intelligence",
+    "routing",
+)
+
+builder.add_edge(
+    "routing",
+    "optimize_itinerary",
+)
+
+builder.add_edge(
+    "optimize_itinerary",
     END,
 )
 

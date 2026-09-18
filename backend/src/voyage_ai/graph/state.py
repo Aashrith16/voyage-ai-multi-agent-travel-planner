@@ -1,5 +1,9 @@
 from typing import Literal, TypedDict
 
+from voyage_ai.models.activity import ActivityIntelligence
+from voyage_ai.models.routing import TravelMatrix
+from voyage_ai.models.itinerary import OptimizedItinerary
+
 from voyage_ai.models.destination import DestinationResearch
 from voyage_ai.models.trip import (
     TripRequest,
@@ -31,6 +35,11 @@ class TravelRequestState(TypedDict, total=False):
     
     weather_context: WeatherContext
 
+    activity_intelligence: ActivityIntelligence
+
+    travel_matrix: TravelMatrix
+
+    optimized_itinerary: OptimizedItinerary
     # Current workflow status
     status: Literal[
         "processing",
