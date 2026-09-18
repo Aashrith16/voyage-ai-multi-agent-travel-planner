@@ -11,6 +11,7 @@ dependencies = [
     "jsonpatch>=1.33",
     "langgraph>=1.2.11",
     "openai-agents>=0.22.2",
+    "ortools>=9.15.6755",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.3",
