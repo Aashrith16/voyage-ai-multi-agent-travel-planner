@@ -112,6 +112,37 @@ Destination:
 Traveler interests:
 {trip.interests}
 
+RECOMMENDATION REQUIREMENTS
+
+Generate between 16 and 20 distinct, realistic activity recommendations
+for the destination.
+
+The recommendations must provide enough options for a multi-day itinerary.
+
+Include a balanced variety of:
+- famous attractions and landmarks
+- places strongly related to the traveler's interests
+- cultural and historical attractions
+- local food experiences
+- shopping areas
+- indoor activities
+- outdoor activities
+- evening or nightlife experiences where appropriate
+- local neighborhoods or less-obvious experiences
+
+Important rules:
+- Recommend real, identifiable places or activities.
+- Avoid duplicates and near-duplicates.
+- Do not recommend the same district repeatedly under slightly different names.
+- Prefer places that can realistically be resolved to geographic coordinates.
+- Spread recommendations across different parts of the destination when useful.
+- Every recommendation must include a clear reason for recommendation.
+- Every recommendation must reference only valid source IDs from the provided web search evidence.
+- Do not invent source IDs.
+- Do not invent a place simply to reach the requested number of recommendations.
+
+
+
 WEB SEARCH SOURCES
 
 {evidence}

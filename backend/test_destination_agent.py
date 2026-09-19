@@ -24,6 +24,18 @@ research = research_destination(
     trip
 )
 
+print("\nTOTAL RECOMMENDATIONS:")
+print(len(research.recommendations))
+
+print("\nRECOMMENDATION NAMES:")
+
+for index, recommendation in enumerate(
+    research.recommendations,
+    start=1,
+):
+    print(
+        f"{index}. {recommendation.name}"
+    )
 
 print("\n======================================")
 print("DESTINATION RESEARCH")
