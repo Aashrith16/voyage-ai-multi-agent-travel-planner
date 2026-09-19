@@ -1,4 +1,5 @@
 import { useState } from "react";
+import TripMap from "./components/TripMap";
 import {
   Plane,
   Sparkles,
@@ -82,6 +83,9 @@ function App() {
   const research = result?.destination_research;
   const weather = result?.weather_context;
   const itinerary = result?.optimized_itinerary;
+
+  const activityIntelligence =
+    result?.activity_intelligence;
 
 
   return (
@@ -589,6 +593,32 @@ function App() {
 
                 </div>
               </section>
+            )}
+
+            {activityIntelligence &&
+              itinerary && (
+                <section className="content-card">
+
+                  <div className="card-title">
+                    <MapPin size={20} />
+                    Interactive Trip Map
+                  </div>
+
+                  <p className="map-description">
+                    Explore the real locations used by
+                    VoyageAI's routing and itinerary
+                    optimization system.
+                  </p>
+
+                  <TripMap
+                    activities={
+                      activityIntelligence.activities ||
+                      []
+                    }
+                    itinerary={itinerary}
+                  />
+
+                </section>
             )}
 
           </div>

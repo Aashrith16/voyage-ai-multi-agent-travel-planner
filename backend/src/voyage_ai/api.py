@@ -1,4 +1,5 @@
 from uuid import uuid4
+import httpx
 
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -35,15 +36,18 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
     ],
 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ==================================================
 # REQUEST MODEL
@@ -64,6 +68,14 @@ class TripPlanningRequest(BaseModel):
             "Optional conversation thread ID."
         ),
     )
+
+class RoutePoint(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class RouteGeometryRequest(BaseModel):
+    points: list[RoutePoint]
 
 
 # ==================================================
@@ -87,6 +99,104 @@ def health():
         "service": "VoyageAI API",
     }
 
+@app.post("/api/route-geometry")
+def route_geometry(
+    payload: RouteGeometryRequest,
+):
+    """
+    Return a real drivable OSRM route
+    through the supplied coordinates.
+    """
+
+    if len(payload.points) < 2:
+        return {
+            "geometry": [],
+            "distance_km": 0,
+            "duration_minutes": 0,
+        }
+
+
+    coordinates = ";".join(
+        f"{point.longitude},{point.latitude}"
+        for point in payload.points
+    )
+
+
+    url = (
+        "https://router.project-osrm.org/"
+        f"route/v1/driving/{coordinates}"
+    )
+
+
+    try:
+        response = httpx.get(
+            url,
+            params={
+                "overview": "full",
+                "geometries": "geojson",
+                "steps": "false",
+            },
+            timeout=30,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+
+        if (
+            data.get("code") != "Ok"
+            or not data.get("routes")
+        ):
+            raise ValueError(
+                "OSRM could not calculate route."
+            )
+
+
+        route = data["routes"][0]
+
+        coordinates = (
+            route["geometry"]["coordinates"]
+        )
+
+
+        # GeoJSON gives [longitude, latitude].
+        # Leaflet requires [latitude, longitude].
+        leaflet_geometry = [
+            [latitude, longitude]
+            for longitude, latitude
+            in coordinates
+        ]
+
+
+        return {
+            "geometry":
+                leaflet_geometry,
+
+            "distance_km":
+                round(
+                    route["distance"]
+                    / 1000,
+                    2,
+                ),
+
+            "duration_minutes":
+                round(
+                    route["duration"]
+                    / 60,
+                    1,
+                ),
+        }
+
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Could not retrieve OSRM route: "
+                f"{error}"
+            ),
+        )
 
 # ==================================================
 # TRIP PLANNING ENDPOINT
