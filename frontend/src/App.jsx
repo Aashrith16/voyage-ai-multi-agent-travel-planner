@@ -20,6 +20,50 @@ import "./App.css";
 const API_URL =
   "http://127.0.0.1:8000/api/plan-trip";
 
+function minutesToTime(totalMinutes) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  return `${String(hours).padStart(2, "0")}:${String(
+    minutes
+  ).padStart(2, "0")}`;
+}
+
+
+function buildDaySchedule(
+  activities,
+  startMinutes = 9 * 60
+) {
+  let currentTime = startMinutes;
+
+  return activities.map((activity) => {
+    const travelMinutes =
+      activity.travel_from_previous_minutes || 0;
+
+    currentTime += travelMinutes;
+
+    const startTime = currentTime;
+
+    const duration =
+      activity.estimated_duration_minutes || 0;
+
+    const endTime =
+      startTime + duration;
+
+    currentTime = endTime;
+
+    return {
+      ...activity,
+
+      start_time:
+        minutesToTime(startTime),
+
+      end_time:
+        minutesToTime(endTime),
+    };
+  });
+}
+
 
 function App() {
   const [request, setRequest] = useState(
@@ -496,11 +540,10 @@ function App() {
                         ) : (
                           <div className="activity-list">
 
-                            {day.activities.map(
-                              (
-                                activity,
-                                index
-                              ) => (
+                            {buildDaySchedule(
+                              day.activities
+                            ).map(
+                              (activity, index) => (
                                 <div
                                   className="activity-row"
                                   key={index}
@@ -517,6 +560,14 @@ function App() {
                                         activity.name
                                       }
                                     </h4>
+
+                                    <div className="activity-time">
+                                      {activity.start_time}
+                                      {" – "}
+                                      {activity.end_time}
+                                    </div>
+
+                                    
 
                                     <p>
                                       Duration:{" "}
