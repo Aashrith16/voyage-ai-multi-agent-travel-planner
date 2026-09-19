@@ -140,7 +140,44 @@ Important rules:
 - Every recommendation must reference only valid source IDs from the provided web search evidence.
 - Do not invent source IDs.
 - Do not invent a place simply to reach the requested number of recommendations.
+- The `name` of every recommendation MUST be the canonical name of one real,
+  geographically identifiable place that can be searched on a map.
 
+- The `name` must represent a single venue, landmark, district, park, museum,
+  market, attraction, restaurant, shopping complex, station, or other physical
+  place.
+
+- Do NOT put tour titles, workshop titles, classes, guided experiences,
+  generic categories, or descriptive activity phrases in the `name`.
+
+- Do NOT use transport networks or entire train lines such as "Yamanote Line"
+  as recommendation names.
+
+- If recommending a tour, workshop, food experience, or similar activity,
+  use the real physical venue or meeting location as the recommendation name
+  and describe the experience in `why_recommended`.
+
+- Prefer official/canonical place names that a geocoder is likely to recognize.
+
+Examples:
+
+BAD name:
+"Akihabara Anime & Gaming Adventure Tour"
+
+GOOD name:
+"Akihabara"
+
+BAD name:
+"Manga Drawing Workshop Guided by Pro Manga Artist"
+
+GOOD name:
+"Manga School Nakano"
+
+BAD name:
+"Yamanote Line"
+
+GOOD name:
+"Tokyo Station"
 
 
 WEB SEARCH SOURCES
