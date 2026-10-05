@@ -480,6 +480,91 @@ if itinerary:
         itinerary.objective_value
     )
 
+print(
+    "\n======================================"
+)
+
+print(
+    "OPTIMIZER DIAGNOSTICS"
+)
+
+print(
+    "======================================"
+)
+
+
+print(
+    "\nSELECTED ACTIVITIES:"
+)
+
+print(
+    len(itinerary.selected_activities)
+)
+
+
+for index, name in enumerate(
+    itinerary.selected_activities,
+    start=1,
+):
+    print(
+        f"{index}. {name}"
+    )
+
+
+print(
+    "\nDROPPED ACTIVITIES:"
+)
+
+print(
+    len(itinerary.dropped_activities)
+)
+
+
+for index, name in enumerate(
+    itinerary.dropped_activities,
+    start=1,
+):
+    print(
+        f"{index}. {name}"
+    )
+
+
+print(
+    "\nACTIVITIES PER DAY:"
+)
+
+
+total_scheduled = 0
+
+
+for day in itinerary.days:
+
+    activity_count = len(
+        day.activities
+    )
+
+    total_scheduled += activity_count
+
+    print(
+        f"Day {day.day_number}: "
+        f"{activity_count} activities"
+    )
+
+    for activity in day.activities:
+
+        print(
+            f"   - {activity.name}"
+        )
+
+
+print(
+    "\nTOTAL SCHEDULED:"
+)
+
+print(
+    total_scheduled
+)
+
 
 print(
     "\n======================================"

@@ -562,7 +562,7 @@ def optimize_itinerary(
     )
 
 
-    search_parameters.time_limit.seconds = 5
+    search_parameters.time_limit.seconds = 10
 
 
     # ----------------------------------------------
