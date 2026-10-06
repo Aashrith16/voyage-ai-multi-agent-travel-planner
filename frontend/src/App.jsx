@@ -420,7 +420,7 @@ function App() {
 
                 <div className="card-title">
                   <CloudSun size={20} />
-                  Weather Intelligence
+                  Weather Outlook
                 </div>
 
                 <div className="weather-grid">
