@@ -299,10 +299,16 @@ function App() {
           </div>
         )}
 
+        {result?.status === "processing" && (
+          <div className="processing-box">
+            VoyageAI is still processing your trip...
+          </div>
+        )}
+
 
         {/* RESULTS */}
 
-        {result && (
+        {result?.status === "complete" && (
           <div className="results">
 
             <section className="result-header">
@@ -420,7 +426,7 @@ function App() {
 
                 <div className="card-title">
                   <CloudSun size={20} />
-                  Weather Outlook
+                  Weather outlook
                 </div>
 
                 <div className="weather-grid">
