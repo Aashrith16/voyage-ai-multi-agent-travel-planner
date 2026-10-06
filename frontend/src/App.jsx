@@ -18,7 +18,7 @@ import "./App.css";
 
 
 const API_URL =
-  "http://127.0.0.1:8000/api/plan-trip";
+  "https://voyageai-backend-5pf8.onrender.com/api/plan-trip";
 
 function minutesToTime(totalMinutes) {
   const hours = Math.floor(totalMinutes / 60);

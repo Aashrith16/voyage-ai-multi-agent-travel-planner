@@ -19,7 +19,7 @@ import "leaflet/dist/leaflet.css";
 
 
 const ROUTE_API =
-  "http://127.0.0.1:8000/api/route-geometry";
+  "https://voyageai-backend-5pf8.onrender.com/api/route-geometry";
 
 
 function FitMap({ positions }) {
