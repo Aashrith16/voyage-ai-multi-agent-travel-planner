@@ -111,7 +111,6 @@ def clarification_node(
 # Understand the user's FOLLOW-UP answer
 # and merge it with the previous state
 # --------------------------------------------------
-
 def process_followup_node(
     state: TravelRequestState,
 ) -> dict:
@@ -120,14 +119,33 @@ def process_followup_node(
 
     followup_input = state[
         "followup_input"
-    ]
+    ].strip()
 
-    # Gemini understands only the new reply.
+    
+
+    # If destination is already known but origin is missing,
+    # treat the clarification answer as the origin.
+    if (
+        previous_draft.destination
+        and not previous_draft.origin
+    ):
+        merged_draft = previous_draft.model_copy(
+            update={
+                "origin": followup_input,
+            }
+        )
+
+       
+        return {
+            "draft": merged_draft,
+            "status": "processing",
+        }
+
+    # Fallback for any other clarification.
     new_draft = understand_trip_request(
         followup_input
     )
 
-    # Python combines old + new information.
     merged_draft = merge_trip_drafts(
         previous_draft,
         new_draft,
@@ -137,8 +155,6 @@ def process_followup_node(
         "draft": merged_draft,
         "status": "processing",
     }
-
-
 # --------------------------------------------------
 # NODE 4
 # Create strict final TripRequest
