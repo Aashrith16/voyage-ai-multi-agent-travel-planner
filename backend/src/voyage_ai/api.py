@@ -1,6 +1,8 @@
 from uuid import uuid4
 import httpx
 
+from langgraph.types import Command
+
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
@@ -235,6 +237,11 @@ def plan_trip(
             )
         )
 
+        interrupts = result.get("__interrupt__", [])
+        clarification = None
+        if interrupts:
+            clarification = interrupts[0].value
+
 
         response = {
             "thread_id": thread_id,
@@ -242,6 +249,8 @@ def plan_trip(
             "status": result.get(
                 "status"
             ),
+
+            "clarification": clarification,
 
             "clarification_questions":
                 result.get(
@@ -285,6 +294,93 @@ def plan_trip(
             response
         )
 
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
+
+class TripResumeRequest(BaseModel):
+    thread_id: str
+    answer: str
+
+
+@app.post("/api/resume-trip")
+def resume_trip(
+    payload: TripResumeRequest,
+):
+
+    config = {
+        "configurable": {
+            "thread_id": payload.thread_id,
+        }
+    }
+
+    try:
+
+        result = travel_request_graph.invoke(
+            Command(
+                resume=payload.answer
+            ),
+            config=config,
+        )
+
+        interrupts = result.get(
+            "__interrupt__",
+            []
+        )
+
+        clarification = None
+
+        if interrupts:
+            clarification = (
+                interrupts[0].value
+            )
+
+        response = {
+            "thread_id":
+                payload.thread_id,
+
+            "status":
+                result.get("status"),
+
+            "clarification":
+                clarification,
+
+            "final_trip":
+                result.get("final_trip"),
+
+            "destination_research":
+                result.get(
+                    "destination_research"
+                ),
+
+            "weather_context":
+                result.get(
+                    "weather_context"
+                ),
+
+            "activity_intelligence":
+                result.get(
+                    "activity_intelligence"
+                ),
+
+            "travel_matrix":
+                result.get(
+                    "travel_matrix"
+                ),
+
+            "optimized_itinerary":
+                result.get(
+                    "optimized_itinerary"
+                ),
+        }
+
+        return jsonable_encoder(
+            response
+        )
 
     except Exception as error:
 
