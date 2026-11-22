@@ -1,4 +1,5 @@
 from datetime import date
+from math import isfinite
 
 from pydantic import (
     BaseModel,
@@ -93,6 +94,13 @@ class TripRequestDraft(BaseModel):
     def normalize_currency_field(cls, value):
         return normalize_currency(value)
 
+    @field_validator("budget")
+    @classmethod
+    def validate_budget_amount(cls, value):
+        if value is not None and (not isfinite(value) or value <= 0):
+            raise ValueError("Budget must be a finite positive amount.")
+        return value
+
 
 # --------------------------------------------------
 # FINAL MODEL
@@ -126,6 +134,13 @@ class TripRequest(BaseModel):
     @classmethod
     def normalize_currency_field(cls, value):
         return normalize_currency(value)
+
+    @field_validator("budget")
+    @classmethod
+    def validate_budget_amount(cls, value):
+        if not isfinite(value) or value <= 0:
+            raise ValueError("Budget must be a finite positive amount.")
+        return value
 
     # Keep your existing date validator below it
     @model_validator(mode="after")

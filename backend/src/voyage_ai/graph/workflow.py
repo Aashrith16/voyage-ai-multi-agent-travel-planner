@@ -1,6 +1,10 @@
 from typing import Literal
+from math import isfinite
+import logging
+import re
 
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
@@ -8,6 +12,7 @@ from voyage_ai.agents.destination_agent import research_destination
 
 from voyage_ai.services.weather_service import (
     get_weather_context,
+    unavailable_weather_context,
 )
 
 from voyage_ai.services.activity_service import (
@@ -27,11 +32,41 @@ from voyage_ai.agents.request_agent import (
     understand_trip_request,
 )
 from voyage_ai.graph.state import TravelRequestState
+from voyage_ai.models.budget import (
+    BudgetAllocation,
+    BudgetCategoryAllocation,
+    BudgetCostEstimate,
+)
+from voyage_ai.models.cost_research import CostEvidenceOption, CostPriceStatement, CostResearchResult, CostResearchSource, VerifiedFreeAdmissionEvidence
+from voyage_ai.services.cost_research_service import resolve_cost_option_selections
+from voyage_ai.models.activity import ActivityCandidate, ActivityIntelligence
+from voyage_ai.models.destination import (
+    DestinationRecommendation,
+    DestinationResearch,
+    ResearchSource,
+)
+from voyage_ai.models.itinerary import (
+    OptimizedDay,
+    OptimizedItinerary,
+    ScheduledActivity,
+)
+from voyage_ai.models.routing import TravelMatrix
+from voyage_ai.models.trip import TripRequest, TripRequestDraft
+from voyage_ai.models.weather import DailyWeather, WeatherContext, WeatherRisk
 from voyage_ai.services.trip_request_service import (
     finalize_trip_request,
     is_trip_request_complete,
     merge_trip_drafts,
 )
+from voyage_ai.services.budget_service import (
+    apply_budget_edits,
+    build_budget_allocation,
+)
+from voyage_ai.services.cost_research_service import research_trip_costs
+from voyage_ai.diagnostics import instrument_workflow_node
+from voyage_ai.persistence import initialize_database
+
+logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------
@@ -204,11 +239,25 @@ def weather_intelligence_node(
 
     final_trip = state["final_trip"]
 
-    weather_context = get_weather_context(
-        destination=final_trip.destination,
-        start_date=final_trip.departure_date,
-        end_date=final_trip.return_date,
-    )
+    try:
+        weather_context = get_weather_context(
+            destination=final_trip.destination,
+            start_date=final_trip.departure_date,
+            end_date=final_trip.return_date,
+        )
+    except Exception as error:
+        # Weather is optional planning context. A last-resort failure must not
+        # prevent research, budget review, or itinerary generation.
+        logger.warning(
+            "Weather unavailable; continuing without conditions (exception_type=%s)",
+            type(error).__name__,
+        )
+        weather_context = unavailable_weather_context(
+            destination=final_trip.destination,
+            start_date=final_trip.departure_date,
+            end_date=final_trip.return_date,
+            error=error,
+        )
 
     return {
         "weather_context": weather_context,
@@ -341,7 +390,8 @@ def add_planning_durations(
             activity.model_copy(
                 update={
                     "estimated_duration_minutes":
-                        duration
+                        duration,
+                    "duration_estimate_basis": "category_fallback_estimate",
                 }
             )
         )
@@ -375,6 +425,152 @@ def routing_node(
         "travel_matrix": matrix,
     }
 
+
+def cost_research_node(state: TravelRequestState) -> dict:
+    trip = state["final_trip"]
+    research = research_trip_costs(trip, state["activity_intelligence"])
+    activities = state["activity_intelligence"].activities
+    sources_by_url = {source.url: source for source in research.sources}
+    free_admissions = {
+        re.sub(r"[^a-z0-9]+", "", item.activity_name.casefold()): item
+        for item in research.verified_free_activities
+    }
+    enriched = []
+    for activity in activities:
+        normalized_activity_name = re.sub(r"[^a-z0-9]+", "", activity.name.casefold())
+        price = next((
+            estimate for estimate in research.estimates
+            if estimate.category == "activities_attractions"
+            and estimate.scope == "entity"
+            and estimate.entity_name is not None
+            and re.sub(r"[^a-z0-9]+", "", estimate.entity_name.casefold()) == normalized_activity_name
+            and estimate.currency == trip.currency
+            and estimate.basis in {"per_traveler", "per_admission"}
+        ), None)
+        source = sources_by_url.get(price.source_url) if price else None
+        if price:
+            enriched.append(activity.model_copy(update={
+                "estimated_cost": price.amount,
+                "currency": price.currency,
+                "cost_status": "indicative",
+                "admission_status": "priced",
+                "cost_basis": "per_traveler",
+                "cost_source_url": price.source_url,
+                "cost_source_type": price.source_type,
+                "cost_retrieved_on": str(price.retrieved_on) if price.retrieved_on else None,
+                "cost_confidence": price.confidence,
+                "cost_confidence_level": price.confidence_level,
+                "cost_evidence": price.evidence_quote,
+            }))
+        elif (free := free_admissions.get(normalized_activity_name)) is not None:
+            enriched.append(activity.model_copy(update={
+                "admission_status": "verified_free",
+                "cost_status": "verified_free",
+                "cost_source_url": free.source_url,
+                "cost_source_type": "official",
+                "cost_retrieved_on": str(free.retrieved_on),
+                "cost_confidence_level": "high",
+                "cost_evidence": free.evidence_quote,
+            }))
+        else:
+            enriched.append(activity)
+    intelligence = state["activity_intelligence"].model_copy(update={"activities": enriched})
+    return {
+        "activity_intelligence": intelligence,
+        "cost_research": research,
+        # Attraction admissions are attached to individual activities below;
+        # treating a single ticket as the whole-trip activities category cost
+        # would misstate the category total.
+        "budget_cost_estimates": [
+            estimate for estimate in research.estimates
+            if estimate.category not in {"activities_attractions", "local_transportation", "accommodation"}
+        ],
+    }
+
+
+def prepare_budget_allocation_node(
+    state: TravelRequestState,
+) -> dict:
+    trip = state["final_trip"]
+    allocation = build_budget_allocation(
+        trip=trip,
+        cost_estimates=state.get("budget_cost_estimates", []),
+    )
+    return {
+        "budget_allocation": allocation,
+        "budget_approved": False,
+        "status": "budget_review",
+    }
+
+
+def budget_review_node(
+    state: TravelRequestState,
+) -> dict:
+    allocation: BudgetAllocation = state["budget_allocation"]
+    approval = interrupt({
+        "type": "budget_review",
+        "message": "Review and confirm category caps before generating the itinerary.",
+        "budget_allocation": allocation.model_dump(mode="json"),
+    })
+    if not isinstance(approval, dict):
+        raise ValueError("Budget approval must contain category allocations.")
+    trip = state["final_trip"]
+    research = state.get("cost_research")
+    selected_rows = approval.get("cost_option_selections", [])
+    if not isinstance(selected_rows, list):
+        raise ValueError("Cost option selections must be a list.")
+    selected_estimates = resolve_cost_option_selections(
+        research.options if research else [], selected_rows, trip,
+    )
+    selected_categories = {estimate.category for estimate in selected_estimates}
+    base_estimates = [
+        estimate for estimate in state.get("budget_cost_estimates", [])
+        if estimate.category not in selected_categories
+    ]
+    if selected_estimates:
+        allocation = build_budget_allocation(trip, base_estimates + selected_estimates)
+    updated = apply_budget_edits(
+        allocation,
+        approval.get("category_allocations", {}),
+    )
+    intelligence = state["activity_intelligence"]
+    manual_costs = approval.get("activity_costs", {})
+    known_names = {activity.name for activity in intelligence.activities}
+    if set(manual_costs) - known_names:
+        raise ValueError("Manual activity costs contain an unknown activity.")
+    edited_activities = []
+    for activity in intelligence.activities:
+        if activity.name not in manual_costs:
+            edited_activities.append(activity)
+            continue
+        raw = manual_costs[activity.name]
+        if isinstance(raw, bool):
+            raise ValueError("Manual activity costs must be monetary amounts.")
+        try:
+            amount = float(raw)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Manual activity costs must be valid monetary amounts.") from error
+        if not isfinite(amount) or amount < 0:
+            raise ValueError("Manual activity costs must be finite and non-negative.")
+        edited_activities.append(activity.model_copy(update={
+            "estimated_cost": round(amount, 2),
+            "currency": state["final_trip"].currency,
+            "cost_status": "user_provided",
+            "admission_status": "priced",
+            "cost_basis": "per_traveler",
+            "cost_source_url": None,
+            "cost_retrieved_on": None,
+            "cost_confidence": None,
+            "cost_confidence_level": None,
+            "cost_evidence": "User-entered estimate",
+        }))
+    return {
+        "budget_allocation": updated,
+        "activity_intelligence": intelligence.model_copy(update={"activities": edited_activities}),
+        "budget_approved": True,
+        "status": "optimizing",
+    }
+
 # ==================================================
 # ITINERARY OPTIMIZATION NODE
 # ==================================================
@@ -396,6 +592,9 @@ def optimize_itinerary_node(
     weather = state[
         "weather_context"
     ]
+    budget_allocation = state["budget_allocation"]
+    if not state.get("budget_approved"):
+        raise ValueError("Budget allocation must be confirmed before itinerary optimization.")
 
     # Number of calendar days in the trip
     number_of_days = (
@@ -421,6 +620,24 @@ def optimize_itinerary_node(
         :number_of_days
     ]
 
+    # The return date is reserved for return travel unless the user has
+    # supplied a departure time. The request model has no flight-time field,
+    # so scheduling a full sightseeing day would imply unavailable details.
+    # Reserve one hour on usable sightseeing days for routine schedule variation.
+    # This is an explicit planning margin, not a claimed traffic or queue forecast.
+    day_buffers = [60] * number_of_days
+    available_minutes_by_day = [600 - buffer for buffer in day_buffers]
+    day_schedule_notes = [None] * number_of_days
+    if number_of_days > 1:
+        day_schedule_notes[0] = (
+            "Arrival-day sightseeing is provisional because the arrival time was not provided; the schedule is a planning window, not a clock-time guarantee."
+        )
+        available_minutes_by_day[-1] = 0
+        day_buffers[-1] = 0
+        day_schedule_notes[-1] = (
+            "Return travel day: no local activities scheduled because the return departure time was not provided."
+        )
+
     itinerary = optimize_itinerary(
         activity_intelligence=intelligence,
         travel_matrix=matrix,
@@ -428,10 +645,14 @@ def optimize_itinerary_node(
 
         # 10 planning hours per day
         daily_minutes=600,
+        daily_minutes_by_day=available_minutes_by_day,
+        daily_buffer_minutes_by_day=day_buffers,
+        day_schedule_notes=day_schedule_notes,
 
-        # We have not separated the total trip
-        # budget into an activity-only budget yet.
-        activity_budget=None,
+        # Use the category cap approved by the traveler.
+        activity_budget=budget_allocation.amount_for("activities_attractions"),
+        budget_currency=budget_allocation.currency,
+        travelers=trip.travelers,
 
         weather_suitability_by_day=(
             weather_by_day
@@ -455,52 +676,64 @@ builder = StateGraph(
 
 builder.add_node(
     "understand_request",
-    understand_request_node,
+    instrument_workflow_node("understand_request", understand_request_node),
 )
 
 builder.add_node(
     "clarify",
-    clarification_node,
+    instrument_workflow_node("clarify", clarification_node),
 )
 
 builder.add_node(
     "process_followup",
-    process_followup_node,
+    instrument_workflow_node("process_followup", process_followup_node),
 )
 
 builder.add_node(
     "finalize",
-    finalize_request_node,
+    instrument_workflow_node("finalize", finalize_request_node),
 )
 
 builder.add_node(
     "research_destination",
-    research_destination_node,
+    instrument_workflow_node("research_destination", research_destination_node),
 )
 
 builder.add_node(
     "weather_intelligence",
-    weather_intelligence_node,
+    instrument_workflow_node("weather_intelligence", weather_intelligence_node),
 )
 
 builder.add_node(
     "context_ready",
-    context_ready_node,
+    instrument_workflow_node("context_ready", context_ready_node),
 )
 
 builder.add_node(
     "activity_intelligence",
-    activity_intelligence_node,
+    instrument_workflow_node("activity_intelligence", activity_intelligence_node),
 )
 
 builder.add_node(
     "routing",
-    routing_node,
+    instrument_workflow_node("routing", routing_node),
+)
+
+builder.add_node("cost_research", instrument_workflow_node("cost_research", cost_research_node))
+
+builder.add_node(
+    "prepare_budget_allocation",
+    instrument_workflow_node("prepare_budget_allocation", prepare_budget_allocation_node),
+)
+
+builder.add_node(
+    "budget_review",
+    instrument_workflow_node("budget_review", budget_review_node),
 )
 
 builder.add_node(
     "optimize_itinerary",
-    optimize_itinerary_node,
+    instrument_workflow_node("optimize_itinerary", optimize_itinerary_node),
 )
 
 # --------------------------------------------------
@@ -596,10 +829,10 @@ builder.add_edge(
     "routing",
 )
 
-builder.add_edge(
-    "routing",
-    "optimize_itinerary",
-)
+builder.add_edge("routing", "cost_research")
+builder.add_edge("cost_research", "prepare_budget_allocation")
+builder.add_edge("prepare_budget_allocation", "budget_review")
+builder.add_edge("budget_review", "optimize_itinerary")
 
 builder.add_edge(
     "optimize_itinerary",
@@ -611,10 +844,49 @@ builder.add_edge(
 # CHECKPOINTER
 # --------------------------------------------------
 
-memory = MemorySaver()
+_checkpoint_models = [
+    ActivityCandidate,
+    ActivityIntelligence,
+    BudgetAllocation,
+    BudgetCategoryAllocation,
+    BudgetCostEstimate,
+    CostResearchResult,
+    CostResearchSource,
+    CostPriceStatement,
+    CostEvidenceOption,
+    VerifiedFreeAdmissionEvidence,
+    DestinationRecommendation,
+    DestinationResearch,
+    DailyWeather,
+    OptimizedDay,
+    OptimizedItinerary,
+    ResearchSource,
+    ScheduledActivity,
+    TravelMatrix,
+    TripRequest,
+    TripRequestDraft,
+    WeatherContext,
+    WeatherRisk,
+]
+
+# JsonPlusSerializer uses msgpack without pickle fallback. Explicitly allow
+# only the Pydantic models that can appear in graph state, so restoring a
+# checkpoint preserves their types without permitting arbitrary module loads.
+checkpoint_serializer = JsonPlusSerializer(
+    pickle_fallback=False,
+    allowed_msgpack_modules=_checkpoint_models,
+)
+database_pool = initialize_database()
+if database_pool is not None:
+    from langgraph.checkpoint.postgres import PostgresSaver
+
+    checkpointer = PostgresSaver(database_pool, serde=checkpoint_serializer)
+    checkpointer.setup()
+else:
+    checkpointer = MemorySaver(serde=checkpoint_serializer)
 
 
 # Compile graph with persistence enabled.
 travel_request_graph = builder.compile(
-    checkpointer=memory
+    checkpointer=checkpointer
 )

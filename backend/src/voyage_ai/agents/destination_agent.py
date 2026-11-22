@@ -1,6 +1,10 @@
+import logging
+
 from dotenv import load_dotenv
 from google import genai
+from pydantic import ValidationError
 
+from voyage_ai.gemini_config import get_gemini_model
 from voyage_ai.models.destination import (
     DestinationAnalysis,
     DestinationResearch,
@@ -16,6 +20,7 @@ load_dotenv()
 
 
 client = genai.Client()
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_INSTRUCTIONS = """
@@ -48,6 +53,10 @@ Important rules:
 
 10. If the supplied evidence does not support a claim,
     do not make that claim.
+
+11. Recommend sightseeing, food, culture, nature, shopping, or other
+    visitor activities. Do not include ordinary hotels, hostels, or
+    lodging listings as activities. Use a specific place category.
 """
 
 
@@ -67,8 +76,46 @@ def research_destination(
     sources = search_destination(
         destination=trip.destination,
         interests=trip.interests,
-    )
+    ) or []
+    sources = [
+        source for source in sources
+        if isinstance(source, dict)
+        and isinstance(source.get("id"), int)
+        and not isinstance(source.get("id"), bool)
+        and all(isinstance(source.get(field), str) for field in ("title", "url", "content"))
+        and source["title"].strip()
+        and source["url"].strip()
+        and source["content"].strip()
+    ]
 
+
+    valid_source_ids = {
+        source["id"]
+        for source in sources
+        if isinstance(source.get("id"), int) and not isinstance(source.get("id"), bool)
+    }
+
+    research_sources = [
+        ResearchSource(id=source["id"], title=source["title"], url=source["url"])
+        for source in sources
+        if isinstance(source.get("id"), int)
+        and not isinstance(source.get("id"), bool)
+        and source["id"] in valid_source_ids
+    ]
+
+    if not valid_source_ids:
+        logger.warning(
+            "Destination research has no usable sources; returning incomplete evidence "
+            "(source_count=%d)",
+            len(sources),
+        )
+        return DestinationResearch(
+            destination=trip.destination,
+            summary="Destination research is incomplete because no verifiable search sources were available.",
+            recommendations=[],
+            practical_tips=[],
+            sources=[],
+        )
 
     # ---------------------------------------------
     # STEP 2
@@ -137,6 +184,11 @@ Important rules:
 - Prefer places that can realistically be resolved to geographic coordinates.
 - Spread recommendations across different parts of the destination when useful.
 - Every recommendation must include a clear reason for recommendation.
+- Provide `estimated_visit_minutes` as an approximate planning estimate for the
+  specific place, based on its nature and the supplied evidence. This is a
+  planning estimate, not an official or verified visit duration. Do not use it
+  to imply opening hours or guaranteed visit length. Use null if a reasonable
+  estimate cannot be made.
 - Every recommendation must reference only valid source IDs from the provided web search evidence.
 - Do not invent source IDs.
 - Do not invent a place simply to reach the requested number of recommendations.
@@ -191,63 +243,101 @@ WEB SEARCH SOURCES
     # Gemini analyzes grounded evidence
     # ---------------------------------------------
 
-    interaction = client.interactions.create(
-        model="gemini-3.5-flash-lite",
-        input=prompt,
-        response_format={
-            "type": "text",
-            "mime_type": "application/json",
-            "schema": DestinationAnalysis.model_json_schema(),
-        },
+    # Gemini can occasionally emit IDs outside the supplied evidence set.
+    # Retry once with the exact allowlist, then keep only recommendations whose
+    # original source associations resolve to real search results.
+    retry_prompt = (
+        f"{prompt}\n\nCORRECTION: The only allowed source IDs are "
+        f"{sorted(valid_source_ids)}. Recreate the analysis using only these IDs. "
+        "Omit any recommendation that cannot be supported by one or more of them. "
+        "Do not invent, renumber, or substitute source IDs."
     )
+    analysis = None
+    final_invalid_ids: set[int] = set()
+    parse_failed = False
 
-
-    analysis = DestinationAnalysis.model_validate_json(
-        interaction.output_text
-    )
-
-
-    # ---------------------------------------------
-    # STEP 5
-    # Validate source IDs
-    # ---------------------------------------------
-
-    valid_source_ids = {
-        source["id"]
-        for source in sources
-    }
-
-    for recommendation in analysis.recommendations:
-
-        invalid_ids = (
-            set(recommendation.source_ids)
-            - valid_source_ids
-        )
-
-        if invalid_ids:
-            raise ValueError(
-                "Gemini returned invalid source IDs: "
-                f"{invalid_ids}"
+    for attempt in range(2):
+        try:
+            interaction = client.interactions.create(
+                model=get_gemini_model(),
+                input=prompt if attempt == 0 else retry_prompt,
+                response_format={
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": DestinationAnalysis.model_json_schema(),
+                },
             )
+            candidate = DestinationAnalysis.model_validate_json(interaction.output_text)
+        except ValidationError as error:
+            # A malformed structured response, including a non-integer source
+            # ID, is eligible for one correction attempt. Provider errors remain
+            # visible to the normal workflow error handling.
+            parse_failed = True
+            logger.warning(
+                "Destination research response failed schema validation "
+                "(attempt=%d, error_type=%s)",
+                attempt + 1,
+                type(error).__name__,
+            )
+            continue
 
+        invalid_ids = {
+            source_id
+            for recommendation in candidate.recommendations
+            for source_id in recommendation.source_ids
+            if source_id not in valid_source_ids
+        }
+        if not invalid_ids:
+            analysis = candidate
+            parse_failed = False
+            break
 
-    # ---------------------------------------------
-    # STEP 6
-    # Attach REAL source URLs using Python
-    # ---------------------------------------------
-
-    research_sources = [
-        ResearchSource(
-            id=source["id"],
-            title=source["title"],
-            url=source["url"],
+        final_invalid_ids = invalid_ids
+        parse_failed = False
+        logger.warning(
+            "Destination research returned source IDs outside current search results "
+            "(attempt=%d, invalid_ids=%s, valid_source_ids=%s)",
+            attempt + 1,
+            sorted(invalid_ids),
+            sorted(valid_source_ids),
         )
-        for source in sources
-    ]
+
+    if analysis is None and not parse_failed and final_invalid_ids:
+        # Preserve only exact, valid model-to-source associations. Never
+        # reassign a citation or show free-form summary/tips after this fallback.
+        last_response = DestinationAnalysis.model_validate_json(interaction.output_text)
+        supported_recommendations = []
+        for recommendation in last_response.recommendations:
+            accepted_ids = [
+                source_id for source_id in recommendation.source_ids
+                if source_id in valid_source_ids
+            ]
+            if accepted_ids:
+                supported_recommendations.append(
+                    recommendation.model_copy(update={"source_ids": accepted_ids})
+                )
+        analysis = DestinationAnalysis(
+            destination=trip.destination,
+            summary="Destination research is incomplete; some generated claims did not reference available sources.",
+            recommendations=supported_recommendations,
+            practical_tips=[],
+        )
+    elif analysis is None:
+        logger.warning(
+            "Destination research response remained malformed after one correction attempt "
+            "(valid_source_count=%d)",
+            len(valid_source_ids),
+        )
+        analysis = DestinationAnalysis(
+            destination=trip.destination,
+            summary="Destination research is incomplete because a verifiable structured response was unavailable.",
+            recommendations=[],
+            practical_tips=[],
+        )
 
 
     return DestinationResearch(
-        destination=analysis.destination,
+        destination=trip.destination,
         summary=analysis.summary,
         recommendations=analysis.recommendations,
         practical_tips=analysis.practical_tips,

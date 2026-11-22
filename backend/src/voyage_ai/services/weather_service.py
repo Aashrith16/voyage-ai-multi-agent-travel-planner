@@ -460,12 +460,12 @@ def get_weather_context(
         )
 
 
-    location = geocode_city(
-        destination
-    )
-
-    latitude = location["latitude"]
-    longitude = location["longitude"]
+    try:
+        location = geocode_city(destination)
+        latitude = location["latitude"]
+        longitude = location["longitude"]
+    except Exception as error:
+        return unavailable_weather_context(destination, start_date, end_date, error)
 
 
     today = date.today()
@@ -487,19 +487,49 @@ def get_weather_context(
         <= FORECAST_HORIZON_DAYS
     ):
 
-        return build_forecast_context(
+        try:
+            return build_forecast_context(
+                destination=destination,
+                latitude=latitude,
+                longitude=longitude,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        except Exception as error:
+            return unavailable_weather_context(destination, start_date, end_date, error, latitude, longitude)
+
+    try:
+        return build_seasonal_context(
             destination=destination,
             latitude=latitude,
             longitude=longitude,
             start_date=start_date,
             end_date=end_date,
         )
+    except Exception as error:
+        return unavailable_weather_context(destination, start_date, end_date, error, latitude, longitude)
 
 
-    return build_seasonal_context(
+def unavailable_weather_context(
+    destination: str,
+    start_date: date,
+    end_date: date,
+    error: Exception,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> WeatherContext:
+    """Keep the rest of trip planning usable when the provider is unavailable."""
+    days = [
+        DailyWeather(date=(start_date + timedelta(days=index)))
+        for index in range((end_date - start_date).days + 1)
+    ]
+    return WeatherContext(
         destination=destination,
         latitude=latitude,
         longitude=longitude,
-        start_date=start_date,
-        end_date=end_date,
+        data_mode="unavailable",
+        disclaimer="Weather data could not be retrieved for these dates. No weather conditions have been estimated.",
+        daily_weather=days,
+        risks=[classify_weather_risk(day) for day in days],
+        summary=f"Weather provider unavailable: {type(error).__name__}.",
     )

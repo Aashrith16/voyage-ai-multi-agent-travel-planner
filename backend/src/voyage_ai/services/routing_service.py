@@ -8,6 +8,7 @@ from voyage_ai.services.geospatial_service import (
     calculate_distance_km,
     enrich_activity_intelligence,
 )
+from voyage_ai.services.activity_service import is_accommodation_activity
 from voyage_ai.tools.routing import (
     get_route_matrix,
 )
@@ -106,6 +107,20 @@ def build_travel_matrix(
         )
     )
 
+    accommodation_names = [
+        activity.name for activity in enriched.activities
+        if is_accommodation_activity(activity)
+    ]
+    enriched = enriched.model_copy(update={
+        "activities": [
+            activity for activity in enriched.activities
+            if not is_accommodation_activity(activity)
+        ],
+        "excluded_accommodation_names": list(dict.fromkeys(
+            enriched.excluded_accommodation_names + accommodation_names
+        )),
+    })
+
 
     valid_activities = [
         activity
@@ -117,11 +132,18 @@ def build_travel_matrix(
     ]
 
 
-    if len(valid_activities) < 2:
+    if not valid_activities:
         raise ValueError(
-            "At least two resolved activities "
-            "are required to build a route matrix."
+            "No resolved sightseeing activities are available to build a route matrix."
         )
+
+    if len(valid_activities) == 1:
+        fallback_intelligence = ActivityIntelligence(
+            destination=enriched.destination,
+            activities=valid_activities,
+            excluded_accommodation_names=enriched.excluded_accommodation_names,
+        )
+        return fallback_intelligence, build_fallback_matrix(fallback_intelligence)
 
 
     coordinates = [
@@ -247,6 +269,7 @@ def build_travel_matrix(
                 activities=(
                     valid_activities
                 ),
+                excluded_accommodation_names=enriched.excluded_accommodation_names,
             )
         )
 

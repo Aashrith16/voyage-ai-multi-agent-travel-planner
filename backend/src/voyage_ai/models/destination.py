@@ -8,6 +8,10 @@ class DestinationRecommendation(BaseModel):
 
     why_recommended: str
 
+    # An AI planning estimate of time a visitor might spend at the place.
+    # This is not a sourced opening-hours or official visit-duration fact.
+    estimated_visit_minutes: int | None = Field(default=None, ge=15, le=600)
+
     source_ids: list[int] = Field(
         min_length=1,
     )

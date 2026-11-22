@@ -14,12 +14,16 @@ import {
 } from "react";
 
 import L from "leaflet";
+import { getDayRouteGroup, getMapEmptyMessage, getRouteTotalMinutes } from "../lib/routeData";
 
 import "leaflet/dist/leaflet.css";
 
 
-const ROUTE_API =
-  "https://voyageai-backend-5pf8.onrender.com/api/route-geometry";
+const API_URL = import.meta.env.VITE_API_URL || (
+  import.meta.env.DEV
+    ? "http://127.0.0.1:8000"
+    : "https://voyageai-backend-5pf8.onrender.com"
+);
 
 
 function FitMap({ positions }) {
@@ -66,6 +70,7 @@ function createNumberedIcon(
 function TripMap({
   activities = [],
   itinerary = null,
+  accessToken = null,
 }) {
   const [routes, setRoutes] =
     useState({});
@@ -78,82 +83,7 @@ function TripMap({
 
 
   const dayGroups = useMemo(() => {
-    const coordinateMap =
-      new Map();
-
-
-    for (const activity of activities) {
-      if (
-        activity.latitude != null &&
-        activity.longitude != null
-      ) {
-        coordinateMap.set(
-          activity.name,
-          [
-            Number(activity.latitude),
-            Number(activity.longitude),
-          ]
-        );
-      }
-    }
-
-
-    const groups = [];
-
-    for (
-      const day of
-      itinerary?.days || []
-    ) {
-      const resolvedActivities = [];
-
-
-      for (
-        const activity of
-        day.activities || []
-      ) {
-        const position =
-          coordinateMap.get(
-            activity.name
-          );
-
-
-        if (!position) {
-          continue;
-        }
-
-
-        resolvedActivities.push({
-          ...activity,
-
-          day_number:
-            day.day_number,
-
-          position,
-        });
-      }
-
-
-      if (
-        resolvedActivities.length
-      ) {
-        groups.push({
-          day_number:
-            day.day_number,
-
-          activities:
-            resolvedActivities,
-
-          positions:
-            resolvedActivities.map(
-              (activity) =>
-                activity.position
-            ),
-        });
-      }
-    }
-
-
-    return groups;
+    return (itinerary?.days || []).map(day => getDayRouteGroup(day, activities)).filter(Boolean);
   }, [activities, itinerary]);
 
 
@@ -204,13 +134,16 @@ function TripMap({
           try {
             const response =
               await fetch(
-                ROUTE_API,
+                `${API_URL}/api/route-geometry`,
                 {
                   method: "POST",
 
                   headers: {
                     "Content-Type":
                       "application/json",
+                    ...(accessToken
+                      ? { Authorization: `Bearer ${accessToken}` }
+                      : {}),
                   },
 
                   body:
@@ -300,14 +233,13 @@ function TripMap({
       cancelled = true;
     };
 
-  }, [dayGroups]);
+  }, [accessToken, dayGroups]);
 
 
   if (!allPositions.length) {
     return (
       <div className="map-empty">
-        No resolved itinerary
-        locations are available.
+        {getMapEmptyMessage(itinerary)}
       </div>
     );
   }
@@ -346,7 +278,6 @@ function TripMap({
               routes[
                 day.day_number
               ];
-
             if (
               !route?.geometry ||
               route.geometry.length <
@@ -480,6 +411,11 @@ function TripMap({
               routes[
                 day.day_number
               ];
+            const durationMinutes = getRouteTotalMinutes(
+              route,
+              day.total_travel_minutes,
+              Math.max(day.positions.length - 1, 0),
+            );
 
 
             return (
@@ -521,16 +457,10 @@ function TripMap({
                   )}
 
 
-                {route
-                  ?.duration_minutes !=
-                  null &&
-                  route.duration_minutes >
-                    0 && (
+                {durationMinutes != null &&
+                  durationMinutes > 0 && (
                     <span>
-                      {
-                        route.duration_minutes
-                      }{" "}
-                      min driving
+                      {Math.round(durationMinutes * 10) / 10} min driving estimate
                     </span>
                   )}
 

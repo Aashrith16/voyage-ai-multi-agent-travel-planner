@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 from google import genai
 
+from voyage_ai.gemini_config import get_gemini_model
 from voyage_ai.models.trip import TripRequestDraft
 
 
@@ -91,7 +92,7 @@ USER REQUEST:
 """
 
     interaction = client.interactions.create(
-        model="gemini-3.5-flash-lite",
+        model=get_gemini_model(),
         input=prompt,
         response_format={
             "type": "text",

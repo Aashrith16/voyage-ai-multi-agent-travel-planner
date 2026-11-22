@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -20,6 +22,10 @@ class ScheduledActivity(BaseModel):
     estimated_duration_minutes: int = Field(
         ge=1,
     )
+    duration_estimate_basis: Literal[
+        "activity_specific_ai_estimate",
+        "category_fallback_estimate",
+    ] = "category_fallback_estimate"
 
     travel_from_previous_minutes: float = Field(
         default=0,
@@ -32,6 +38,14 @@ class ScheduledActivity(BaseModel):
     )
 
     environment: str
+    estimated_cost: float | None = Field(default=None, ge=0)
+    currency: str | None = None
+    cost_status: str = "unavailable"
+    cost_source_url: str | None = None
+    cost_source_type: Literal["official", "third_party", "unknown"] = "unknown"
+    admission_status: Literal["verified_free", "priced", "unpriced"] = "unpriced"
+    requires_price_verification: bool = True
+    opening_hours_verified: bool = False
 
 
 class OptimizedDay(BaseModel):
@@ -43,6 +57,7 @@ class OptimizedDay(BaseModel):
         ge=1,
     )
     weather_suitability: str | None = None
+    schedule_note: str | None = None
 
     activities: list[ScheduledActivity] = Field(
         default_factory=list,
@@ -52,7 +67,6 @@ class OptimizedDay(BaseModel):
         default=0,
         ge=0,
     )
-
     total_activity_minutes: int = Field(
         default=0,
         ge=0,
@@ -62,6 +76,7 @@ class OptimizedDay(BaseModel):
         default=0,
         ge=0,
     )
+    buffer_minutes: int = Field(default=0, ge=0)
 
 
 class OptimizedItinerary(BaseModel):
@@ -83,10 +98,23 @@ class OptimizedItinerary(BaseModel):
         default_factory=list,
     )
 
+    unpriced_activities: list[str] = Field(
+        default_factory=list,
+        description="Activities whose price is unknown or incompatible with the budget currency.",
+    )
+
+    priced_activities: list[str] = Field(default_factory=list)
+    verified_free_activities: list[str] = Field(default_factory=list)
+    provisional_activities: list[str] = Field(default_factory=list)
+    budget_status: Literal["within_cap", "provisional", "not_budgeted"] = "not_budgeted"
+    planning_limitations: list[str] = Field(default_factory=list)
+
     total_activity_cost: float = Field(
         default=0,
         ge=0,
     )
+    priced_activity_cost: float = Field(default=0, ge=0)
+    provisional_activity_cost: float | None = Field(default=None, ge=0)
 
     activity_budget: float | None = Field(
         default=None,

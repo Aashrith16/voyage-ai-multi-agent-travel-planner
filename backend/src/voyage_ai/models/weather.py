@@ -48,12 +48,13 @@ class WeatherRisk(BaseModel):
 class WeatherContext(BaseModel):
     destination: str
 
-    latitude: float
-    longitude: float
+    latitude: float | None = None
+    longitude: float | None = None
 
     data_mode: Literal[
         "forecast",
         "seasonal_history",
+        "unavailable",
     ]
 
     disclaimer: str

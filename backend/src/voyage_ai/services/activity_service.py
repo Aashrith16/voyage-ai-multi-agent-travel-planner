@@ -10,6 +10,47 @@ from voyage_ai.models.destination import (
 from voyage_ai.models.trip import TripRequest
 
 
+_LODGING_TYPES = {
+    "hotel", "hostel", "motel", "guest_house", "guesthouse", "inn",
+    "apartment", "chalet", "alpine_hut", "camp_site", "caravan_site",
+    "accommodation", "lodging",
+}
+_SIGHTSEEING_CATEGORIES = {
+    "attraction", "sightseeing", "temple", "shrine", "museum",
+    "gallery", "park", "garden", "nature", "food", "restaurant", "cafe",
+    "market", "shopping", "landmark", "historic", "heritage",
+}
+_LODGING_NAME_PREFIX = re.compile(
+    r"^\s*(?:the\s+)?(?:hotel|hostel|motel|guest\s*house|guesthouse|inn)\b",
+    re.IGNORECASE,
+)
+_LODGING_DESCRIPTION = re.compile(
+    r"\b(?:hotel|hostel|motel|guest\s*house|guesthouse|lodging|accommodation)\b"
+    r".{0,45}\b(?:rooms?|overnight|stay|check[ -]?in|booking|per night)\b",
+    re.IGNORECASE,
+)
+
+
+def is_accommodation_activity(activity: ActivityCandidate) -> bool:
+    """Classify lodging without excluding attractions by incidental name text."""
+    category_words = {word.casefold() for word in tokenize(activity.category)}
+    if category_words & _SIGHTSEEING_CATEGORIES:
+        return False
+    if category_words & _LODGING_TYPES:
+        return True
+
+    resolved_type = (activity.resolved_place_type or "").casefold().replace("-", "_")
+    resolved_category = (activity.resolved_place_category or "").casefold()
+    if resolved_type in _LODGING_TYPES and resolved_category in {"tourism", "accommodation", "lodging"}:
+        return True
+
+    # Name and description checks are fallbacks only when no stronger place
+    # category indicates a visitor attraction.
+    if _LODGING_NAME_PREFIX.search(activity.name):
+        return True
+    return bool(_LODGING_DESCRIPTION.search(activity.description))
+
+
 def tokenize(text: str) -> set[str]:
     """
     Convert text into lowercase words.
@@ -155,8 +196,38 @@ def build_activity_intelligence(
     """
 
     activities = []
+    excluded_accommodation_names = []
 
     for recommendation in research.recommendations:
+        candidate = ActivityCandidate(
+            name=recommendation.name,
+            category=recommendation.category,
+            description=recommendation.why_recommended,
+            estimated_duration_minutes=recommendation.estimated_visit_minutes,
+            duration_estimate_basis=(
+                "activity_specific_ai_estimate"
+                if recommendation.estimated_visit_minutes is not None
+                else "category_fallback_estimate"
+            ),
+            currency=trip.currency,
+            source_ids=recommendation.source_ids,
+            preference_score=calculate_preference_score(
+                name=recommendation.name,
+                category=recommendation.category,
+                description=recommendation.why_recommended,
+                interests=trip.interests,
+            ),
+            environment=classify_environment(
+                name=recommendation.name,
+                category=recommendation.category,
+                description=recommendation.why_recommended,
+            ),
+            weather_sensitive=False,
+            confidence=0.8 if recommendation.source_ids else 0.4,
+        )
+        if is_accommodation_activity(candidate):
+            excluded_accommodation_names.append(candidate.name)
+            continue
 
         environment = classify_environment(
             name=recommendation.name,
@@ -205,7 +276,12 @@ def build_activity_intelligence(
 
             environment=environment,
 
-            estimated_duration_minutes=None,
+            estimated_duration_minutes=recommendation.estimated_visit_minutes,
+            duration_estimate_basis=(
+                "activity_specific_ai_estimate"
+                if recommendation.estimated_visit_minutes is not None
+                else "category_fallback_estimate"
+            ),
             estimated_cost=None,
 
             currency=trip.currency,
@@ -232,4 +308,5 @@ def build_activity_intelligence(
     return ActivityIntelligence(
         destination=trip.destination,
         activities=activities,
+        excluded_accommodation_names=excluded_accommodation_names,
     )

@@ -16,6 +16,24 @@ from voyage_ai.models.routing import (
 )
 
 
+def _admission_status(activity, budget_currency: str | None) -> str:
+    if (
+        activity.admission_status == "verified_free"
+        and activity.cost_source_type == "official"
+        and activity.cost_source_url
+        and activity.cost_evidence
+    ):
+        return "verified_free"
+    if (
+        activity.estimated_cost is not None
+        and activity.estimated_cost > 0
+        and activity.currency
+        and (budget_currency is None or activity.currency.upper() == budget_currency.upper())
+    ):
+        return "priced"
+    return "unpriced"
+
+
 def _build_augmented_time_matrix(
     travel_matrix: TravelMatrix,
 ) -> list[list[int]]:
@@ -62,6 +80,20 @@ def _build_augmented_time_matrix(
 
 
     return matrix
+
+
+def _activity_drop_penalty(activity) -> int:
+    """Value a stop in the same minute units as travel/service costs.
+
+    A stop is worth its modeled visit time plus a bounded preference and
+    confidence bonus. This lets the solver omit a low-priority distant stop
+    when its road travel overhead is disproportionate.
+    """
+    return (
+        activity.estimated_duration_minutes
+        + round(activity.preference_score * 90)
+        + round(activity.confidence * 30)
+    )
 
 def calculate_weather_penalty(
     environment: str,
@@ -120,6 +152,11 @@ def optimize_itinerary(
     daily_minutes: int = 600,
     activity_budget: float | None = None,
     weather_suitability_by_day: list[str] | None = None,
+    budget_currency: str | None = None,
+    travelers: int = 1,
+    daily_minutes_by_day: list[int] | None = None,
+    day_schedule_notes: list[str | None] | None = None,
+    daily_buffer_minutes_by_day: list[int] | None = None,
 ) -> OptimizedItinerary:
     """
     Optimize activity selection, day assignment,
@@ -134,14 +171,36 @@ def optimize_itinerary(
     - Higher preference activities receive
       a higher penalty if dropped.
 
-    Budget and weather constraints are added
-    in the next optimizer stage.
+    When an approved activity budget is present, sourced costs are a hard
+    constraint and activities with missing or mismatched-currency costs are
+    excluded rather than treated as free.
     """
 
     if number_of_days < 1:
         raise ValueError(
             "number_of_days must be at least 1."
         )
+    if travelers < 1:
+        raise ValueError("travelers must be at least 1.")
+
+    if daily_minutes_by_day is None:
+        daily_minutes_by_day = [daily_minutes] * number_of_days
+    if len(daily_minutes_by_day) != number_of_days or any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in daily_minutes_by_day
+    ):
+        raise ValueError("daily_minutes_by_day must contain a non-negative integer capacity for every day.")
+    if day_schedule_notes is None:
+        day_schedule_notes = [None] * number_of_days
+    if len(day_schedule_notes) != number_of_days:
+        raise ValueError("day_schedule_notes must contain one note for every day.")
+    if daily_buffer_minutes_by_day is None:
+        daily_buffer_minutes_by_day = [0] * number_of_days
+    if len(daily_buffer_minutes_by_day) != number_of_days or any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in daily_buffer_minutes_by_day
+    ):
+        raise ValueError("daily_buffer_minutes_by_day must contain a non-negative integer for every day.")
 
     if (
         activity_budget is not None
@@ -206,6 +265,12 @@ def optimize_itinerary(
             "No activities available "
             "for optimization."
         )
+
+    unpriced_activities = [
+        activity.name
+        for activity in activities
+        if _admission_status(activity, budget_currency) == "unpriced"
+    ]
 
 
     travel_times = (
@@ -305,12 +370,12 @@ def optimize_itinerary(
     # DAILY TIME CONSTRAINT
     # ----------------------------------------------
 
-    routing.AddDimension(
+    routing.AddDimensionWithVehicleCapacity(
         transit_callback_index,
 
         0,
 
-        daily_minutes,
+        daily_minutes_by_day,
 
         True,
 
@@ -455,11 +520,19 @@ def optimize_itinerary(
                 node - 1
             ]
 
-            activity_cost = (
-                activity.estimated_cost
-                if activity.estimated_cost
-                is not None
-                else 0
+            node_index = manager.NodeToIndex(node)
+            active = routing.ActiveVar(node_index)
+
+            status = _admission_status(activity, budget_currency)
+            if status == "unpriced":
+                # Keep unknown-cost stops as provisional suggestions. They are
+                # not included in priced totals or the hard known-cost cap.
+                continue
+            if status == "verified_free":
+                continue
+
+            activity_cost = activity.estimated_cost * (
+                travelers if activity.cost_basis == "per_traveler" else 1
             )
 
             scaled_cost = int(
@@ -469,25 +542,41 @@ def optimize_itinerary(
                 )
             )
 
-            node_index = (
-                manager.NodeToIndex(
-                    node
-                )
-            )
-
-
             budget_terms.append(
-                routing.ActiveVar(
-                    node_index
-                )
-                * scaled_cost
+                active * scaled_cost
             )
 
+    # When there are enough feasible stops, require one stop on every day.
+    # This prevents the solver from clustering all visits on one arbitrary day.
+    eligible_nodes = []
+    for node, activity in enumerate(activities, start=1):
+        if activity.estimated_duration_minutes > daily_minutes:
+            continue
+        status = _admission_status(activity, budget_currency)
+        if status == "unpriced" or status == "verified_free":
+            eligible_nodes.append(node)
+        elif activity_budget is None or activity.estimated_cost * (
+            travelers if activity.cost_basis == "per_traveler" else 1
+        ) <= activity_budget + 0.01:
+            eligible_nodes.append(node)
+    available_vehicles = [
+        vehicle_id
+        for vehicle_id, capacity in enumerate(daily_minutes_by_day)
+        if capacity > 0
+    ]
+    if available_vehicles and len(eligible_nodes) >= len(available_vehicles):
+        solver = routing.solver()
+        for vehicle_id in available_vehicles:
+            assigned = [
+                solver.IsEqualCstVar(routing.VehicleVar(manager.NodeToIndex(node)), vehicle_id)
+                for node in eligible_nodes
+            ]
+            solver.Add(solver.Sum(assigned) >= 1)
 
-        solver.Add(
-            sum(budget_terms)
-            <= maximum_budget
-        )
+
+    if activity_budget is not None and budget_terms:
+        solver = routing.solver()
+        solver.Add(sum(budget_terms) <= maximum_budget)
 
 
     # ----------------------------------------------
@@ -510,23 +599,7 @@ def optimize_itinerary(
         ]
 
 
-        preference_component = int(
-            activity.preference_score
-            * 10000
-        )
-
-
-        confidence_component = int(
-            activity.confidence
-            * 2000
-        )
-
-
-        penalty = (
-            5000
-            + preference_component
-            + confidence_component
-        )
+        penalty = _activity_drop_penalty(activity)
 
 
         routing.AddDisjunction(
@@ -589,6 +662,9 @@ def optimize_itinerary(
     optimized_days = []
 
     selected_names = []
+    priced_names: list[str] = []
+    verified_free_names: list[str] = []
+    provisional_names: list[str] = []
 
 
     for vehicle_id in range(
@@ -648,6 +724,7 @@ def optimize_itinerary(
                         activity
                         .estimated_duration_minutes
                     ),
+                    duration_estimate_basis=activity.duration_estimate_basis,
 
                     travel_from_previous_minutes=(
                         float(
@@ -662,6 +739,17 @@ def optimize_itinerary(
                     environment=(
                         activity.environment
                     ),
+                    estimated_cost=(
+                        round(activity.estimated_cost * (travelers if activity.cost_basis == "per_traveler" else 1), 2)
+                        if _admission_status(activity, budget_currency) == "priced" else None
+                    ),
+                    currency=activity.currency,
+                    cost_status=activity.cost_status,
+                    cost_source_url=activity.cost_source_url,
+                    cost_source_type=activity.cost_source_type,
+                    admission_status=_admission_status(activity, budget_currency),
+                    requires_price_verification=_admission_status(activity, budget_currency) == "unpriced",
+                    opening_hours_verified=activity.opening_hours_verified,
                 )
 
 
@@ -673,6 +761,13 @@ def optimize_itinerary(
                 selected_names.append(
                     activity.name
                 )
+                status = _admission_status(activity, budget_currency)
+                if status == "unpriced":
+                    provisional_names.append(activity.name)
+                elif status == "verified_free":
+                    verified_free_names.append(activity.name)
+                else:
+                    priced_names.append(activity.name)
 
 
                 total_activity_minutes += (
@@ -681,8 +776,8 @@ def optimize_itinerary(
                 )
 
                 total_activity_cost += (
-                    activity.estimated_cost
-                    if activity.estimated_cost is not None
+                    activity.estimated_cost * (travelers if activity.cost_basis == "per_traveler" else 1)
+                    if status == "priced"
                     else 0
               )
 
@@ -718,6 +813,9 @@ def optimize_itinerary(
                     is not None
                     else None
                 ),
+
+                schedule_note=day_schedule_notes[vehicle_id],
+                buffer_minutes=daily_buffer_minutes_by_day[vehicle_id],
 
                 activities=(
                     day_activities
@@ -764,14 +862,26 @@ def optimize_itinerary(
 
     total_selected_cost = sum(
     (
-        activity.estimated_cost
-        if activity.estimated_cost is not None
+        activity.estimated_cost * (travelers if activity.cost_basis == "per_traveler" else 1)
+        if _admission_status(activity, budget_currency) == "priced"
         else 0
     )
     for activity in activities
     if activity.name in selected_set
     )
 
+
+    planning_limitations = []
+    if provisional_names:
+        planning_limitations.append(
+            "Some scheduled suggestions have unknown admission prices. They are excluded from priced totals; total activity spending cannot be verified against the cap."
+        )
+    if any(not activity.opening_hours_verified for activity in activities if activity.name in selected_names):
+        planning_limitations.append("Verified opening hours were unavailable; check hours before visiting.")
+    if selected_names:
+        planning_limitations.append(
+            "Visit durations are planning estimates, not verified attraction durations. Daily visit and inter-stop driving capacity reserves a one-hour flexibility buffer on sightseeing days. Meals, queues, parking, and lodging/airport transfers are not modeled."
+        )
 
     return OptimizedItinerary(
         destination=(
@@ -788,10 +898,23 @@ def optimize_itinerary(
             dropped_names
         ),
 
+        unpriced_activities=unpriced_activities,
+        priced_activities=priced_names,
+        verified_free_activities=verified_free_names,
+        provisional_activities=provisional_names,
+        budget_status=(
+            "provisional" if provisional_names
+            else "within_cap" if activity_budget is not None
+            else "not_budgeted"
+        ),
+        planning_limitations=planning_limitations,
+
         total_activity_cost=round(
             total_selected_cost,
             2,
         ),
+        priced_activity_cost=round(total_selected_cost, 2),
+        provisional_activity_cost=None if provisional_names else 0.0,
 
         activity_budget=(
             activity_budget

@@ -37,6 +37,8 @@ def enrich_activity_location(
             update={
                 "latitude": place.latitude,
                 "longitude": place.longitude,
+                "resolved_place_category": place.category,
+                "resolved_place_type": place.place_type,
             }
         )
 

@@ -10,6 +10,8 @@ from voyage_ai.models.trip import (
     TripRequestDraft,
 )
 from voyage_ai.models.weather import WeatherContext
+from voyage_ai.models.budget import BudgetAllocation, BudgetCostEstimate
+from voyage_ai.models.cost_research import CostResearchResult
 
 class TravelRequestState(TypedDict, total=False):
     """
@@ -40,10 +42,20 @@ class TravelRequestState(TypedDict, total=False):
     travel_matrix: TravelMatrix
 
     optimized_itinerary: OptimizedItinerary
+
+    budget_cost_estimates: list[BudgetCostEstimate]
+
+    cost_research: CostResearchResult
+
+    budget_allocation: BudgetAllocation
+
+    budget_approved: bool
     # Current workflow status
     status: Literal[
         "processing",
         "needs_clarification",
         "gathering_context",
+        "optimizing",
+        "budget_review",
         "complete",
     ]
