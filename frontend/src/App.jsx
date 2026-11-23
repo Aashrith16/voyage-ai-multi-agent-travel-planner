@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertCircle, ArrowLeft, ArrowRight, CalendarDays, Check, CheckCircle2,
   ChevronDown, Clock3, CloudSun, Compass, Eye, EyeOff, Globe2, Heart, KeyRound,
@@ -12,6 +12,8 @@ import { AuthProvider } from './auth/AuthProvider'
 import { useAuth } from './auth/useAuth'
 import { apiRequest } from './lib/api'
 import { getOrderedRouteStops, getRouteLegMinutes, getRouteTotalMinutes } from './lib/routeData'
+import { getActiveNavigationItem } from './lib/navigation'
+import DestinationImage from './components/DestinationImage'
 import './App.css'
 
 const TripContext = createContext(null)
@@ -38,20 +40,28 @@ function PrivateRoute({ children }) {
 function Header() {
   const { user, signOut, configured } = useAuth()
   const { trip } = useTrip()
+  const { pathname } = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
+  const activeNavigationItem = getActiveNavigationItem(pathname)
   const activeTrip = trip?.trip_id
   const itineraryUrl = activeTrip ? `/trips/${activeTrip}/itinerary` : '/my-trips'
   const mapUrl = activeTrip ? `/trips/${activeTrip}/map` : '/my-trips'
   const closeMenu = () => setMenuOpen(false)
+  const navigationLink = (key, to, label) => <Link
+    to={to}
+    className={activeNavigationItem === key ? 'active' : undefined}
+    aria-current={activeNavigationItem === key ? 'page' : undefined}
+    onClick={closeMenu}
+  >{label}</Link>
   return <header className="site-header">
     <Link className="brand" to="/" aria-label="VoyageAI home" onClick={closeMenu}><span className="brand-mark"><Compass size={21} /></span><span>voyage<span>ai</span></span></Link>
     <nav className={`main-nav ${menuOpen ? 'is-open' : ''}`} aria-label="Main navigation">
-      <NavLink to="/" end onClick={closeMenu}>Home</NavLink>
-      <NavLink to="/plan-trip" onClick={closeMenu}>Plan a Trip</NavLink>
-      <NavLink to={activeTrip ? `/trips/${activeTrip}/budget` : '/my-trips'} onClick={closeMenu}>Budget Review</NavLink>
-      <NavLink to={itineraryUrl} onClick={closeMenu}>My Itinerary</NavLink>
-      <NavLink to={mapUrl} onClick={closeMenu}>Trip Map</NavLink>
-      {user && <NavLink to="/my-trips" onClick={closeMenu}>My Trips</NavLink>}
+      {navigationLink('home', '/', 'Home')}
+      {navigationLink('plan', '/plan-trip', 'Plan a Trip')}
+      {navigationLink('budget', activeTrip ? `/trips/${activeTrip}/budget` : '/my-trips', 'Budget Review')}
+      {navigationLink('itinerary', itineraryUrl, 'My Itinerary')}
+      {navigationLink('map', mapUrl, 'Trip Map')}
+      {user && navigationLink('trips', '/my-trips', 'My Trips')}
     </nav>
     <div className="header-account">
       {user ? <details className="account-menu"><summary aria-label="Account menu"><span className="avatar">{user.email?.[0]?.toUpperCase() || 'V'}</span><ChevronDown size={15} /></summary><div className="account-dropdown"><span className="account-email">{user.email}</span><Link to="/account">Account settings</Link><button onClick={() => { signOut(); closeMenu() }}><LogOut size={15} />Sign out</button></div></details>
@@ -326,7 +336,7 @@ function MyTripsPage() {
   const [error, setError] = useState('')
   useEffect(() => { let cancelled = false; api('/api/trips').then(result => { if (!cancelled) setTrips(result.trips || []) }).catch(reason => { if (!cancelled) setError(reason.message) }).finally(() => { if (!cancelled) setLoading(false) }); return () => { cancelled = true } }, [api])
   return <SiteLayout><main className="page-main"><div className="page-intro compact"><div className="eyebrow"><span /> YOUR SAVED JOURNEYS</div><h1>My <em>trips</em></h1><p>Your planning checkpoints and finished itineraries, together in one place.</p><Link className="primary-button" to="/plan-trip">Plan a new journey <ArrowRight size={16} /></Link></div>
-    {loading ? <LoadingScreen label="Loading your saved trips" /> : error ? <div className="form-error"><AlertCircle size={17} />{error}</div> : trips.length ? <div className="saved-trip-grid">{trips.map(trip => <article className="saved-trip-card" key={trip.trip_id}><div className="saved-trip-image" style={{ backgroundImage: `url(https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=900&q=80)` }}><span>{titleCase(trip.status)}</span></div><div className="saved-trip-body"><h2>{trip.destination || 'Trip details in progress'}</h2><p>{trip.origin ? `${trip.origin} → ` : ''}{dates(trip.departure_date, trip.return_date)}</p><div><span><Users size={15} />{trip.travelers || '—'} travellers</span><span><Wallet size={15} />{money(trip.budget, trip.currency)}</span></div><Link className="text-link" to={`/trips/${trip.trip_id}/${trip.status === 'budget_review' ? 'budget' : trip.status === 'needs_clarification' ? 'clarification' : 'itinerary'}`}>{trip.status === 'budget_review' ? 'Continue budget review' : trip.status === 'needs_clarification' ? 'Add trip details' : 'Open trip'} <ArrowRight size={15} /></Link></div></article>)}</div> : <EmptyState title="Your next journey starts here" body="Plans you create will be saved to your account so you can return to the budget review or itinerary later." action="Plan a trip" to="/plan-trip" />}
+    {loading ? <LoadingScreen label="Loading your saved trips" /> : error ? <div className="form-error"><AlertCircle size={17} />{error}</div> : trips.length ? <div className="saved-trip-grid">{trips.map(trip => <article className="saved-trip-card" key={trip.trip_id}><DestinationImage destination={trip.destination}><span>{titleCase(trip.status)}</span></DestinationImage><div className="saved-trip-body"><h2>{trip.destination || 'Trip details in progress'}</h2><p>{trip.origin ? `${trip.origin} → ` : ''}{dates(trip.departure_date, trip.return_date)}</p><div><span><Users size={15} />{trip.travelers || '—'} travellers</span><span><Wallet size={15} />{money(trip.budget, trip.currency)}</span></div><Link className="text-link" to={`/trips/${trip.trip_id}/${trip.status === 'budget_review' ? 'budget' : trip.status === 'needs_clarification' ? 'clarification' : 'itinerary'}`}>{trip.status === 'budget_review' ? 'Continue budget review' : trip.status === 'needs_clarification' ? 'Add trip details' : 'Open trip'} <ArrowRight size={15} /></Link></div></article>)}</div> : <EmptyState title="Your next journey starts here" body="Plans you create will be saved to your account so you can return to the budget review or itinerary later." action="Plan a trip" to="/plan-trip" />}
   </main></SiteLayout>
 }
 
