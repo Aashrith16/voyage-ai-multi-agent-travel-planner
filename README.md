@@ -153,15 +153,13 @@ npm run build
 
 ## Screenshots
 
-Current application screenshots are included under `docs/screenshots/`:
+Current production screenshots captured from the deployed application are included under `docs/screenshots/`:
 
-![VoyageAI home and destination discovery](docs/screenshots/home.png)
+![Current VoyageAI homepage](docs/screenshots/homepage-current.png)
 
-![Destination intelligence](docs/screenshots/destination-intelligence.png)
+![My Trips Bengaluru card with destination photograph and attribution](docs/screenshots/my-trips-bengaluru-card.png)
 
-![Optimized itinerary](docs/screenshots/optimized-itinerary.png)
-
-![Trip map](docs/screenshots/trip-map.png)
+![My Trips Goa card with destination photograph and attribution](docs/screenshots/my-trips-goa-card.png)
 
 ## Current limitations and future improvements
 
