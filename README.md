@@ -11,7 +11,7 @@ Trip planning is spread across search, maps, weather, budgeting, and scheduling 
 - Natural-language trip requests and follow-up conversation memory.
 - Destination recommendations researched through Tavily and analyzed by Gemini.
 - Weather context from Open-Meteo, with an explicit unavailable state when the provider cannot supply data.
-- Place geocoding through OpenStreetMap Nominatim and driving routes through OSRM.
+- Place geocoding through Geoapify when configured, with an optional throttled OpenStreetMap Nominatim fallback; driving routes use OSRM.
 - Cost research with source evidence, currency, cost basis, confidence, and indicative-price labeling.
 - Editable category budget allocation and a budget confirmation checkpoint.
 - Multi-day activity selection and ordering with Google OR-Tools, including approved activity caps.
@@ -46,7 +46,7 @@ The budget review is an explicit workflow checkpoint. The optimizer uses user-ap
 
 - **Backend:** Python 3.12+, FastAPI, Pydantic, LangGraph, Google GenAI SDK, OR-Tools
 - **Frontend:** React, Vite, React Router, Supabase JS, Leaflet, React Leaflet
-- **Research and data providers:** Gemini, Tavily, Open-Meteo, OpenStreetMap Nominatim, OSRM
+- **Research and data providers:** Gemini, Tavily, Open-Meteo, Geoapify, OpenStreetMap Nominatim, OSRM
 - **Persistence and authentication:** Supabase Postgres and Supabase Auth in configured deployments; local development mode is available without Supabase
 
 ## Requirements
@@ -55,6 +55,7 @@ The budget review is an explicit workflow checkpoint. The optimizer uses user-ap
 - [uv](https://docs.astral.sh/uv/) for backend dependency management
 - Node.js and npm
 - Gemini and Tavily API credentials for live AI and research functionality
+- A Geoapify API key for production geocoding (recommended)
 - Supabase project credentials for account authentication and persistent production storage
 
 ## Local setup (PowerShell)
@@ -100,6 +101,11 @@ Copy the example files and supply credentials locally. Keep actual secrets out o
 | `GEMINI_API_KEY` | Gemini request understanding and destination analysis |
 | `GEMINI_MODEL` | Optional Gemini model override; defaults to `gemini-3.5-flash-lite` |
 | `TAVILY_API_KEY` | Destination and cost research |
+| `GEOCODING_PROVIDER` | `auto` (default: Geoapify when its key exists, otherwise Nominatim), `geoapify`, or `nominatim` |
+| `GEOAPIFY_API_KEY` | Geoapify geocoding key; recommended for production place resolution |
+| `GEOCODING_NOMINATIM_FALLBACK` | Optional opt-in (`false` by default) to use Nominatim after eligible Geoapify errors; provider throttling applies |
+| `NOMINATIM_USER_AGENT` | Identifies the application when using Nominatim; use a stable app name and contact in production |
+| `NOMINATIM_CONTACT` | Optional contact email supplied to Nominatim |
 | `BUDGET_CONTINGENCY_RATE` | Emergency reserve fraction; defaults to `0.10` |
 | `VOYAGEAI_ENV` | Set to `development` locally and `production` in deployment |
 | `SUPABASE_URL` | Supabase project URL for token verification |
@@ -116,7 +122,7 @@ Copy the example files and supply credentials locally. Keep actual secrets out o
 | `VITE_SUPABASE_URL` | Supabase project URL for frontend authentication |
 | `VITE_SUPABASE_ANON_KEY` | Supabase publishable/anon key; never put a service-role key in the frontend |
 
-The example files contain blank credential placeholders, not working keys. Geocoding, route, and weather integrations do not require keys in the current configuration.
+The example files contain blank credential placeholders, not working keys. Geoapify is selected automatically when `GEOAPIFY_API_KEY` is configured. Without it, the application uses Nominatim, which is subject to the [public service usage policy](https://operations.osmfoundation.org/policies/nominatim/); the backend throttles requests within each process and caches successful lookups. Production should use Geoapify to avoid dependence on the public Nominatim service. Do not enable Nominatim fallback for HTTP 429/629 responses. Route and weather integrations do not require keys in the current configuration.
 
 ## Tests and quality checks
 

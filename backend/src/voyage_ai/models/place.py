@@ -3,8 +3,7 @@ from pydantic import BaseModel, Field
 
 class ResolvedPlace(BaseModel):
     """
-    A real geographic place resolved from
-    OpenStreetMap / Nominatim.
+    A real geographic place resolved by a configured geocoding provider.
     """
 
     query: str

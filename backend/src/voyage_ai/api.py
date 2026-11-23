@@ -21,6 +21,7 @@ from voyage_ai.services.budget_service import (
 )
 from voyage_ai.tools.web_search import DestinationResearchProviderError
 from voyage_ai.services.cost_research_service import resolve_cost_option_selections
+from voyage_ai.services.routing_service import NoResolvedActivitiesError
 from voyage_ai.diagnostics import (
     correlation_id_var,
     log_unexpected_exception,
@@ -416,6 +417,18 @@ def plan_trip(
             status_code=502,
             message="Destination research is temporarily unavailable. Please try again shortly.",
             error_code="destination_research_unavailable",
+        )
+    except NoResolvedActivitiesError as error:
+        return _logged_error_response(
+            request,
+            error,
+            stage="routing",
+            status_code=503,
+            message=(
+                "We could not verify locations for the suggested places, so a route could not be built. "
+                "Please try again later or adjust the destination request."
+            ),
+            error_code="geocoding_unavailable",
         )
     except Exception as error:
         return _logged_error_response(request, error, stage="langgraph.invoke")

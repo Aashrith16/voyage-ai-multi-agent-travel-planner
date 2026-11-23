@@ -29,6 +29,9 @@ export async function apiRequest(path, { token, method = 'GET', body, signal } =
     if (response.status === 502 && data.error?.code === 'destination_research_unavailable') {
       throw new Error('Destination research is temporarily unavailable. Please try again shortly.')
     }
+    if (response.status === 503 && data.error?.code === 'geocoding_unavailable') {
+      throw new Error('VoyageAI could not verify enough place locations to build this trip. Please try again shortly or adjust the destination request.')
+    }
     if (/https?:\/\/|traceback|api\.open-meteo/i.test(detail) || response.status >= 500) {
       throw new Error('VoyageAI could not complete this request. A service may be temporarily unavailable; please try again shortly.')
     }

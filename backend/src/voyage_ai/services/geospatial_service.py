@@ -5,6 +5,7 @@ from math import (
     sin,
     sqrt,
 )
+import logging
 
 from voyage_ai.models.activity import (
     ActivityCandidate,
@@ -13,6 +14,8 @@ from voyage_ai.models.activity import (
 from voyage_ai.tools.place_search import (
     resolve_place,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def enrich_activity_location(
@@ -43,9 +46,13 @@ def enrich_activity_location(
         )
 
     except Exception as error:
-        print(
-            f"Could not resolve "
-            f"{activity.name}: {error}"
+        logger.warning(
+            "Skipping unresolved sightseeing activity "
+            "(activity=%s provider=%s error_type=%s status_code=%s)",
+            activity.name,
+            getattr(error, "provider", "configuration"),
+            type(error).__name__,
+            getattr(error, "status_code", None),
         )
 
         return activity

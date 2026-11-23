@@ -15,6 +15,16 @@ services:
         sync: false
       - key: TAVILY_API_KEY
         sync: false
+      - key: GEOCODING_PROVIDER
+        value: auto
+      - key: GEOAPIFY_API_KEY
+        sync: false
+      - key: GEOCODING_NOMINATIM_FALLBACK
+        value: "false"
+      - key: NOMINATIM_USER_AGENT
+        value: VoyageAI/1.0
+      - key: NOMINATIM_CONTACT
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY

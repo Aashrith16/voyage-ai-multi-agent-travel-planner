@@ -14,6 +14,15 @@ from voyage_ai.tools.routing import (
 )
 
 
+class NoResolvedActivitiesError(RuntimeError):
+    """No real sightseeing coordinates were available for routing."""
+
+    def __init__(self):
+        super().__init__(
+            "No resolved sightseeing activities are available to build a route matrix."
+        )
+
+
 def build_fallback_matrix(
     activity_intelligence: ActivityIntelligence,
 ) -> TravelMatrix:
@@ -133,9 +142,7 @@ def build_travel_matrix(
 
 
     if not valid_activities:
-        raise ValueError(
-            "No resolved sightseeing activities are available to build a route matrix."
-        )
+        raise NoResolvedActivitiesError()
 
     if len(valid_activities) == 1:
         fallback_intelligence = ActivityIntelligence(
