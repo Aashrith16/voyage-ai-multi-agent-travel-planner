@@ -2,6 +2,11 @@
 
 VoyageAI is a multi-agent travel planner that turns a natural-language trip request into a researched, budget-reviewed, route-aware itinerary. It combines AI recommendations with location resolution, weather context, cost evidence, and a constraint-based itinerary optimizer.
 
+## Live demo
+
+- Frontend: [voyageai-pied.vercel.app](https://voyageai-pied.vercel.app)
+- Backend health: [VoyageAI API health](https://voyageai-backend-5pf8.onrender.com/api/health)
+
 ## Problem
 
 Trip planning is spread across search, maps, weather, budgeting, and scheduling tools. A conversational assistant can suggest places, but suggestions alone do not make a practical itinerary. VoyageAI brings those steps into one workflow and keeps the user in control of category budgets before final optimization.
@@ -139,27 +144,31 @@ The backend tests are deterministic and mock external providers. Optional live i
 From `frontend`:
 
 ```powershell
-node --test test/routeData.test.js
+npm test
 npm run lint
 npm run build
 ```
 
-There is no separate frontend test script at present; the route-data regression tests use Node's built-in test runner.
+`npm test` runs the deterministic frontend tests with Node's built-in test runner. `npm run lint` uses Oxlint; ESLint is not configured in this project.
 
 ## Screenshots
 
-No screenshot files are currently included in the repository. Add verified, current screenshots under `docs/screenshots/` before replacing these placeholders.
+Current application screenshots are included under `docs/screenshots/`:
 
-- `[Screenshot placeholder: Home and destination discovery]`
-- `[Screenshot placeholder: Budget review and evidence]`
-- `[Screenshot placeholder: Saved multi-day itinerary]`
-- `[Screenshot placeholder: Interactive trip map]`
+![VoyageAI home and destination discovery](docs/screenshots/home.png)
+
+![Destination intelligence](docs/screenshots/destination-intelligence.png)
+
+![Optimized itinerary](docs/screenshots/optimized-itinerary.png)
+
+![Trip map](docs/screenshots/trip-map.png)
 
 ## Current limitations and future improvements
 
 - Third-party weather, geocoding, routing, and research providers can be rate-limited or temporarily unavailable; unavailable data is surfaced where supported.
 - Driving routes are not public-transit directions. Traffic, attraction hours, meals, queues, transfers, and flight schedules are not fully modeled.
 - Cost research is indicative evidence, not a booking quote or a confirmed price. Currencies are kept distinct; users should verify prices before travel.
+- Some categories or attractions may have no reliable price evidence. Unknown prices remain unknown and are not treated as zero or included as confirmed expenses.
 - The arrival-day schedule is provisional when arrival time is unknown, and return dates without a departure time are left unscheduled.
 - Saved trips created before newer validation and scheduling rules are not retroactively changed. In particular, older saved itineraries may still contain a lodging recommendation as an activity.
 - Live provider behavior and production Supabase deployment require credentials and environment-specific verification. Automated tests do not establish production readiness.

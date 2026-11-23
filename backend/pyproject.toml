@@ -1,7 +1,7 @@
 [project]
 name = "voyage-ai-backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Multi-agent AI travel planner backend for researched, budget-aware itineraries."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
